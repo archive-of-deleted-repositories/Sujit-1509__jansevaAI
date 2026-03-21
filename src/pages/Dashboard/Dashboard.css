@@ -1,127 +1,50 @@
-.dash-page {
-    padding-top: calc(var(--top-offset) + var(--space-xl));
-    padding-bottom: var(--space-3xl);
-    min-height: 100vh;
-}
-.dash-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: var(--space-xl);
-}
-.dash-live {
+/* ── Append these rules to the existing Dashboard.css ── */
+
+/* SLA pill in dashboard alert list */
+.sla-pill-dash {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 99px;
     font-size: 11px;
-    font-weight: 600;
-    padding: 4px 12px;
-    background: var(--success-bg);
-    color: var(--success);
-    border-radius: var(--radius-full);
-    border: 1px solid rgba(46, 125, 50, 0.15);
-    letter-spacing: 0.3px;
-    text-transform: uppercase;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-.live-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--success);
-    animation: live-pulse 1.5s ease-in-out infinite;
-}
-@keyframes live-pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.4; transform: scale(0.8); }
-}
-.stats-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: var(--space-md);
-    margin-bottom: var(--space-md);
-}
-.dash-charts-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-lg);
-    margin-top: var(--space-lg);
-}
-.chart-card h3 {
-    font-size: var(--font-size-sm);
-    font-weight: 700;
-    margin-bottom: var(--space-md);
-    color: var(--text-primary);
-}
-.recharts-text {
-    fill: var(--text-muted) !important;
-    font-size: 11px !important;
-}
-.recharts-legend-item-text {
-    color: var(--text-secondary) !important;
-    font-size: 12px !important;
+    font-weight: 500;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
-/* High Priority Alerts */
-.dash-alerts h3 {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: var(--font-size-sm);
-    font-weight: 700;
-    margin-bottom: var(--space-md);
-}
-.alert-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-.alert-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 14px;
-    background: rgba(239, 68, 68, 0.04);
-    border: 1px solid rgba(239, 68, 68, 0.1);
-    border-radius: var(--radius-md);
-    text-decoration: none;
-    color: var(--text-primary);
-    transition: all 0.2s ease;
-}
-.alert-item:hover {
-    background: rgba(239, 68, 68, 0.08);
-    border-color: rgba(239, 68, 68, 0.2);
-    transform: translateX(4px);
-}
-.alert-desc {
-    flex: 1;
-    font-size: 13px;
-    color: var(--text-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
+/* Assignee tag in recent-complaints table */
+.assignee-tag {
+    display: inline-block;
+    background: var(--color-background-info);
+    color: var(--color-text-info);
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 99px;
     white-space: nowrap;
 }
-.alert-score {
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--severity-critical);
-    background: rgba(239, 68, 68, 0.08);
-    padding: 2px 8px;
-    border-radius: var(--radius-sm);
+
+/* Alert panel header — title + "View all" side by side */
+.alert-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-sm);
+}
+.alert-panel-header h3 {
+    margin: 0;
 }
 
-@media (max-width: 1024px) {
-    .stats-grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
-    .dash-charts-row {
-        grid-template-columns: 1fr;
-    }
+/* Assignee column in alert rows */
+.alert-assignee {
+    font-size: 11px;
+    color: var(--color-text-info);
+    background: var(--color-background-info);
+    padding: 2px 8px;
+    border-radius: 99px;
+    white-space: nowrap;
+    margin-left: auto;
 }
-@media (max-width: 768px) {
-    .stats-grid {
-        grid-template-columns: 1fr 1fr;
-    }
-    .alert-item {
-        flex-wrap: wrap;
-    }
+
+/* SLA alerts card — slightly more prominent border */
+.sla-alerts-card {
+    border-color: var(--color-border-danger);
 }

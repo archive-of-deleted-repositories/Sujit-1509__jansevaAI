@@ -14,23 +14,20 @@ import Worker from './pages/Worker/Worker';
 import Login from './pages/Login/Login';
 
 function AuthGate({ user, children }) {
-    if (!user) {
-        return <Navigate to="/" replace />;
-    }
-
+    if (!user) return <Navigate to="/" replace />;
     return children;
 }
 
 function RoleGate({ user, roles, children }) {
-    if (!user) {
-        return <Navigate to="/" replace />;
-    }
-
+    if (!user) return <Navigate to="/" replace />;
     if (!roles.includes(user.role)) {
-        const fallback = user.role === 'citizen' ? '/' : user.role === 'admin' ? '/dashboard' : '/worker';
+        const fallback = user.role === 'citizen'
+            ? '/'
+            : user.role === 'admin'
+                ? '/dashboard'
+                : '/worker';
         return <Navigate to={fallback} replace />;
     }
-
     return children;
 }
 
@@ -46,10 +43,8 @@ function AppFooter({ links, credit }) {
                     </span>
                 </div>
                 <div className="footer-links">
-                    {links.map((link) => (
-                        <Link key={link.to} to={link.to}>
-                            {link.label}
-                        </Link>
+                    {links.map(link => (
+                        <Link key={link.to} to={link.to}>{link.label}</Link>
                     ))}
                 </div>
                 <div className="footer-credit">{credit}</div>
@@ -58,15 +53,29 @@ function AppFooter({ links, credit }) {
     );
 }
 
+const CITIZEN_FOOTER = [
+    { to: '/',               label: 'Home' },
+    { to: '/submit',         label: 'Report Issue' },
+    { to: '/my-complaints',  label: 'My Complaints' },
+];
+const ADMIN_FOOTER = [
+    { to: '/dashboard',  label: 'Dashboard' },
+    { to: '/complaints', label: 'Complaints' },
+    { to: '/analytics',  label: 'Analytics' },
+];
+const WORKER_FOOTER = [
+    { to: '/worker',     label: 'My Tasks' },
+    { to: '/complaints', label: 'Complaints' },
+];
+const CREDIT = 'Government of India | Smart City Mission | Powered by SmartCityAI';
+
 function App() {
     const [user, setUser] = useState(() => {
         const saved = localStorage.getItem('civicai_user');
         return saved ? JSON.parse(saved) : null;
     });
 
-    const handleLogin = (userData) => {
-        setUser(userData);
-    };
+    const handleLogin = userData => setUser(userData);
 
     const handleLogout = () => {
         localStorage.removeItem('civicai_user');
@@ -78,6 +87,8 @@ function App() {
     return (
         <HashRouter>
             <Routes>
+
+                {/* ── Root ── */}
                 <Route
                     path="/"
                     element={
@@ -86,14 +97,7 @@ function App() {
                         ) : user.role === 'citizen' ? (
                             <CitizenLayout user={user} onLogout={handleLogout}>
                                 <Home />
-                                <AppFooter
-                                    links={[
-                                        { to: '/', label: 'Home' },
-                                        { to: '/submit', label: 'Report Issue' },
-                                        { to: '/my-complaints', label: 'My Complaints' },
-                                    ]}
-                                    credit="Government of India | Smart City Mission | Powered by SmartCityAI"
-                                />
+                                <AppFooter links={CITIZEN_FOOTER} credit={CREDIT} />
                             </CitizenLayout>
                         ) : user.role === 'admin' ? (
                             <Navigate to="/dashboard" replace />
@@ -102,20 +106,15 @@ function App() {
                         )
                     }
                 />
+
+                {/* ── Citizen routes ── */}
                 <Route
                     path="/submit"
                     element={
                         <RoleGate user={user} roles={['citizen']}>
                             <CitizenLayout user={user} onLogout={handleLogout}>
                                 <SubmitComplaint />
-                                <AppFooter
-                                    links={[
-                                        { to: '/', label: 'Home' },
-                                        { to: '/submit', label: 'Report Issue' },
-                                        { to: '/my-complaints', label: 'My Complaints' },
-                                    ]}
-                                    credit="Government of India | Smart City Mission | Powered by SmartCityAI"
-                                />
+                                <AppFooter links={CITIZEN_FOOTER} credit={CREDIT} />
                             </CitizenLayout>
                         </RoleGate>
                     }
@@ -126,50 +125,20 @@ function App() {
                         <RoleGate user={user} roles={['citizen']}>
                             <CitizenLayout user={user} onLogout={handleLogout}>
                                 <MyComplaints />
-                                <AppFooter
-                                    links={[
-                                        { to: '/', label: 'Home' },
-                                        { to: '/submit', label: 'Report Issue' },
-                                        { to: '/my-complaints', label: 'My Complaints' },
-                                    ]}
-                                    credit="Government of India | Smart City Mission | Powered by SmartCityAI"
-                                />
+                                <AppFooter links={CITIZEN_FOOTER} credit={CREDIT} />
                             </CitizenLayout>
                         </RoleGate>
                     }
                 />
+
+                {/* ── Admin routes ── */}
                 <Route
                     path="/dashboard"
                     element={
                         <RoleGate user={user} roles={['admin']}>
                             <AppLayout role="admin" user={user} onLogout={handleLogout}>
                                 <Dashboard />
-                                <AppFooter
-                                    links={[
-                                        { to: '/dashboard', label: 'Dashboard' },
-                                        { to: '/complaints', label: 'Complaints' },
-                                        { to: '/worker', label: 'Worker' },
-                                    ]}
-                                    credit="Government of India | Smart City Mission | Powered by SmartCityAI"
-                                />
-                            </AppLayout>
-                        </RoleGate>
-                    }
-                />
-                <Route
-                    path="/complaints"
-                    element={
-                        <RoleGate user={user} roles={['admin', 'worker']}>
-                            <AppLayout role={user?.role} user={user} onLogout={handleLogout}>
-                                <AdminComplaints />
-                                <AppFooter
-                                    links={[
-                                        { to: user?.role === 'admin' ? '/dashboard' : '/worker', label: user?.role === 'admin' ? 'Dashboard' : 'My Tasks' },
-                                        { to: '/complaints', label: 'Complaints' },
-                                        { to: '/worker', label: 'Worker' },
-                                    ]}
-                                    credit="Government of India | Smart City Mission | Powered by SmartCityAI"
-                                />
+                                <AppFooter links={ADMIN_FOOTER} credit={CREDIT} />
                             </AppLayout>
                         </RoleGate>
                     }
@@ -180,35 +149,43 @@ function App() {
                         <RoleGate user={user} roles={['admin']}>
                             <AppLayout role="admin" user={user} onLogout={handleLogout}>
                                 <Analytics />
+                                <AppFooter links={ADMIN_FOOTER} credit={CREDIT} />
+                            </AppLayout>
+                        </RoleGate>
+                    }
+                />
+
+                {/* ── Shared admin + worker routes ── */}
+                <Route
+                    path="/complaints"
+                    element={
+                        <RoleGate user={user} roles={['admin', 'worker']}>
+                            <AppLayout role={user?.role} user={user} onLogout={handleLogout}>
+                                <AdminComplaints />
                                 <AppFooter
-                                    links={[
-                                        { to: '/dashboard', label: 'Dashboard' },
-                                        { to: '/complaints', label: 'Complaints' },
-                                        { to: '/worker', label: 'Worker' },
-                                    ]}
-                                    credit="Government of India | Smart City Mission | Powered by SmartCityAI"
+                                    links={user?.role === 'admin' ? ADMIN_FOOTER : WORKER_FOOTER}
+                                    credit={CREDIT}
                                 />
                             </AppLayout>
                         </RoleGate>
                     }
                 />
+
+                {/* ── Worker route — NOTE: user prop passed here ── */}
                 <Route
                     path="/worker"
                     element={
                         <RoleGate user={user} roles={['worker']}>
                             <AppLayout role="worker" user={user} onLogout={handleLogout}>
-                                <Worker />
-                                <AppFooter
-                                    links={[
-                                        { to: '/worker', label: 'My Tasks' },
-                                        { to: '/complaints', label: 'Complaints' },
-                                    ]}
-                                    credit="Government of India | Smart City Mission | Powered by SmartCityAI"
-                                />
+                                {/* user prop added so Worker can filter tasks by phone */}
+                                <Worker user={user} />
+                                <AppFooter links={WORKER_FOOTER} credit={CREDIT} />
                             </AppLayout>
                         </RoleGate>
                     }
                 />
+
+                {/* ── Complaint detail — all roles ── */}
                 <Route
                     path="/complaint/:id"
                     element={
@@ -216,31 +193,22 @@ function App() {
                             {user?.role === 'citizen' ? (
                                 <CitizenLayout user={user} onLogout={handleLogout}>
                                     <ComplaintDetail />
-                                    <AppFooter
-                                        links={[
-                                            { to: '/', label: 'Home' },
-                                            { to: '/submit', label: 'Report Issue' },
-                                            { to: '/my-complaints', label: 'My Complaints' },
-                                        ]}
-                                        credit="Government of India | Smart City Mission | Powered by SmartCityAI"
-                                    />
+                                    <AppFooter links={CITIZEN_FOOTER} credit={CREDIT} />
                                 </CitizenLayout>
                             ) : (
                                 <AppLayout role={user?.role} user={user} onLogout={handleLogout}>
                                     <ComplaintDetail />
                                     <AppFooter
-                                        links={[
-                                            { to: user?.role === 'admin' ? '/dashboard' : '/worker', label: user?.role === 'admin' ? 'Dashboard' : 'My Tasks' },
-                                            { to: '/complaints', label: 'Complaints' },
-                                            { to: '/worker', label: 'Worker' },
-                                        ]}
-                                        credit="Government of India | Smart City Mission | Powered by SmartCityAI"
+                                        links={user?.role === 'admin' ? ADMIN_FOOTER : WORKER_FOOTER}
+                                        credit={CREDIT}
                                     />
                                 </AppLayout>
                             )}
                         </AuthGate>
                     }
                 />
+
+                {/* ── Catch-all ── */}
                 <Route
                     path="*"
                     element={
@@ -254,6 +222,7 @@ function App() {
                         )
                     }
                 />
+
             </Routes>
         </HashRouter>
     );

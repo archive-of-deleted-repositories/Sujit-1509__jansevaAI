@@ -1,237 +1,394 @@
-import { useState, useEffect } from 'react';
-import { MapPin, Navigation, CheckCircle, Loader2, Wrench, Clock, AlertTriangle, Camera, ArrowLeft, Filter } from 'lucide-react';
-import { getWorkerAssignments, updateComplaintStatus, getComplaints } from '../../services/api';
-import { StatusBadge, SeverityBadge, CategoryTag, PriorityBar, Loader, TimeAgo } from '../../components/Shared/Shared';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { CheckCircle, XCircle, Clock, Camera, BarChart2, AlertTriangle, RefreshCw, X } from 'lucide-react';
+import {
+    getComplaints,
+    workerRespondToTask,
+    resolveWithProof,
+    updateComplaintStatus,
+    getWorkerStats,
+} from '../../services/api';
 import './Worker.css';
 
-const SLABadge = ({ timestamp }) => {
-    const now = new Date();
-    const filed = new Date(timestamp);
-    const hoursElapsed = Math.max(0, (now - filed) / (1000 * 60 * 60));
-    const daysElapsed = Math.floor(hoursElapsed / 24);
-    const hours = Math.floor(hoursElapsed % 24);
+function slaStatus(c) {
+    if (!c.sla_deadline) return null;
+    const ms = new Date(c.sla_deadline).getTime() - Date.now();
+    if (ms < 0) return { text: `${Math.round(-ms/3600000)}h overdue`, cls: 'sla-breach', urgent: true };
+    if (ms < 6*3600000) return { text: `${Math.round(ms/3600000)}h left`, cls: 'sla-warn', urgent: true };
+    const days = Math.floor(ms / 86400000);
+    const hrs  = Math.floor((ms % 86400000) / 3600000);
+    return { text: days > 0 ? `${days}d ${hrs}h` : `${hrs}h`, cls: 'sla-ok', urgent: false };
+}
 
-    let level = 'green';
-    let label = `${daysElapsed}d ${hours}h`;
-    if (hoursElapsed < 24) {
-        label = `${Math.floor(hoursElapsed)}h`;
-    }
-    if (daysElapsed >= 3) level = 'red';
-    else if (daysElapsed >= 1) level = 'yellow';
+function StatusBadge({ status }) {
+    const map = { assigned: 'badge-info', in_progress: 'badge-warning', resolved: 'badge-success', submitted: 'badge-muted' };
+    return <span className={`badge ${map[status] || 'badge-muted'}`}>{status?.replace('_',' ')}</span>;
+}
 
-    return (
-        <span className={`sla-badge sla-${level}`} title={`Filed ${daysElapsed} days ago`}>
-            <Clock size={12} /> {label}
-        </span>
-    );
-};
+export default function Worker({ user }) {
+    const navigate    = useNavigate();
+    const workerPhone = user?.phone || '';
 
-const Worker = () => {
-    const [assignments, setAssignments] = useState([]);
+    // ── Data ──────────────────────────────────────────────────────────────────
+    const [tasks,   setTasks]   = useState([]);
+    const [stats,   setStats]   = useState(null);
     const [loading, setLoading] = useState(true);
-    const [selected, setSelected] = useState(null);
-    const [updating, setUpdating] = useState(false);
-    const [notes, setNotes] = useState('');
-    const [newStatus, setNewStatus] = useState('');
-    const [filter, setFilter] = useState('all');
+    const [view,    setView]    = useState('tasks'); // 'tasks' | 'stats'
 
-    useEffect(() => {
-        const fetchAssignments = async () => {
-            try {
-                const res = await getWorkerAssignments();
-                setAssignments(res.assignments || []);
-            } catch {
-                // fallback: get all complaints with in_progress or assigned
-                const res = await getComplaints();
-                const filtered = (res.complaints || []).filter(c =>
-                    ['assigned', 'in_progress', 'submitted'].includes(c.status)
-                );
-                setAssignments(filtered);
-            }
+    // ── Resolve with proof modal ──────────────────────────────────────────────
+    const [resolveModal, setResolveModal] = useState(null);
+    const [proofFile,    setProofFile]    = useState(null);
+    const [proofNote,    setProofNote]    = useState('');
+    const [resolveLoading, setResolveLoading] = useState(false);
+    const fileRef = useRef(null);
+
+    // ── Toast ─────────────────────────────────────────────────────────────────
+    const [toast, setToast] = useState('');
+    const timerRef = useRef(null);
+    function showToast(msg) {
+        setToast(msg);
+        clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(() => setToast(''), 3000);
+    }
+
+    // ── Load ──────────────────────────────────────────────────────────────────
+    const load = useCallback(async () => {
+        setLoading(true);
+        try {
+            const [complRes, statsRes] = await Promise.all([
+                getComplaints(),
+                getWorkerStats(workerPhone),
+            ]);
+            const all   = complRes.complaints || [];
+            const mine  = workerPhone
+                ? all.filter(c => c.assigned_to === workerPhone)
+                : all.filter(c => ['assigned','in_progress'].includes(c.status));
+            // Sort: urgent SLA first, then by priority
+            mine.sort((a, b) => {
+                const aUrgent = a.sla_deadline && new Date(a.sla_deadline) < new Date() ? 1 : 0;
+                const bUrgent = b.sla_deadline && new Date(b.sla_deadline) < new Date() ? 1 : 0;
+                if (bUrgent !== aUrgent) return bUrgent - aUrgent;
+                return (b.priorityScore || 0) - (a.priorityScore || 0);
+            });
+            setTasks(mine);
+            setStats(statsRes);
+        } finally {
             setLoading(false);
-        };
-        fetchAssignments();
-    }, []);
-
-    const handleUpdate = async () => {
-        if (!newStatus) return;
-        setUpdating(true);
-        await updateComplaintStatus(selected.incident_id, newStatus, notes);
-        setAssignments((prev) =>
-            prev.map((a) => (a.incident_id === selected.incident_id ? { ...a, status: newStatus } : a))
-        );
-        setSelected(null);
-        setNotes('');
-        setNewStatus('');
-        setUpdating(false);
-    };
-
-    const openGoogleMaps = (complaint) => {
-        const lat = complaint.latitude || complaint.location?.lat;
-        const lng = complaint.longitude || complaint.location?.lng;
-        if (lat && lng) {
-            window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank');
-        } else if (complaint.address) {
-            window.open(`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(complaint.address)}`, '_blank');
         }
-    };
+    }, [workerPhone]);
 
-    const filteredAssignments = assignments.filter(a => {
-        if (filter === 'all') return true;
-        return a.status === filter;
-    });
+    useEffect(() => { load(); }, [load]);
 
-    const counts = {
-        all: assignments.length,
-        submitted: assignments.filter(a => a.status === 'submitted').length,
-        assigned: assignments.filter(a => a.status === 'assigned').length,
-        in_progress: assignments.filter(a => a.status === 'in_progress').length,
-        resolved: assignments.filter(a => a.status === 'resolved').length,
-    };
+    // ── Accept / reject ───────────────────────────────────────────────────────
+    async function handleRespond(task, action) {
+        try {
+            await workerRespondToTask(task.incident_id, action, '');
+            setTasks(prev => prev.map(t =>
+                t.incident_id === task.incident_id
+                    ? { ...t, status: action === 'accepted' ? 'in_progress' : 'submitted', worker_action: action }
+                    : t
+            ));
+            showToast(action === 'accepted' ? 'Task accepted — marked in progress' : 'Task rejected');
+        } catch {
+            showToast('Failed to respond to task');
+        }
+    }
 
-    if (loading) return <div className="worker-page"><Loader size="lg" text="Loading assignments..." /></div>;
+    // ── Resolve (simple, no photo) ────────────────────────────────────────────
+    async function handleSimpleResolve(task) {
+        try {
+            await updateComplaintStatus(task.incident_id, 'resolved', 'Resolved by worker');
+            setTasks(prev => prev.map(t =>
+                t.incident_id === task.incident_id ? { ...t, status: 'resolved' } : t
+            ));
+            showToast('Marked as resolved');
+        } catch {
+            showToast('Failed to resolve');
+        }
+    }
+
+    // ── Resolve with proof ────────────────────────────────────────────────────
+    async function handleResolveWithProof() {
+        if (!resolveModal) return;
+        setResolveLoading(true);
+        try {
+            if (proofFile) {
+                await resolveWithProof(resolveModal.incident_id, proofFile, proofNote || 'Resolved with photo proof');
+            } else {
+                await updateComplaintStatus(resolveModal.incident_id, 'resolved', proofNote || 'Resolved');
+            }
+            setTasks(prev => prev.map(t =>
+                t.incident_id === resolveModal.incident_id
+                    ? { ...t, status: 'resolved', resolution_proof_key: proofFile ? 'uploaded' : null }
+                    : t
+            ));
+            showToast(proofFile ? 'Resolved with photo proof uploaded' : 'Marked as resolved');
+            setResolveModal(null);
+            setProofFile(null);
+            setProofNote('');
+        } catch {
+            showToast('Failed to resolve');
+        } finally {
+            setResolveLoading(false);
+        }
+    }
+
+    const activeTasks   = tasks.filter(t => ['assigned','in_progress'].includes(t.status));
+    const resolvedTasks = tasks.filter(t => ['resolved','closed'].includes(t.status));
 
     return (
         <div className="worker-page">
-            <div className="container">
-                <div className="worker-header">
-                    <div>
-                        <h1 className="section-title">My Assignments</h1>
-                        <p className="text-muted text-sm">{assignments.length} total assignment(s)</p>
-                    </div>
+
+            {/* ── Tab bar ───────────────────────────────────────────────────── */}
+            <div className="worker-tabs">
+                <button className={`worker-tab ${view === 'tasks' ? 'active' : ''}`} onClick={() => setView('tasks')}>
+                    My tasks
+                    {activeTasks.length > 0 && <span className="tab-badge">{activeTasks.length}</span>}
+                </button>
+                <button className={`worker-tab ${view === 'stats' ? 'active' : ''}`} onClick={() => setView('stats')}>
+                    My stats
+                </button>
+                <button className="worker-tab-refresh" onClick={load}>
+                    <RefreshCw size={14} />
+                </button>
+            </div>
+
+            {loading && <div className="worker-loading">Loading…</div>}
+
+            {/* ── TASKS VIEW ───────────────────────────────────────────────── */}
+            {!loading && view === 'tasks' && (
+                <div className="tasks-view">
+
+                    {activeTasks.length === 0 && (
+                        <div className="worker-empty">
+                            <CheckCircle size={32} style={{ opacity: .3 }} />
+                            <p>No active tasks assigned to you</p>
+                        </div>
+                    )}
+
+                    {activeTasks.map(task => {
+                        const sla      = slaStatus(task);
+                        const isNew    = task.status === 'assigned' && task.worker_action !== 'accepted';
+                        const inProg   = task.status === 'in_progress';
+
+                        return (
+                            <div key={task.incident_id} className={`task-card ${sla?.urgent ? 'task-urgent' : ''}`}>
+                                <div className="task-top">
+                                    <div className="task-meta">
+                                        <span className="task-id" onClick={() => navigate(`/complaint/${task.incident_id}`)}>
+                                            {task.incident_id?.slice(0, 12)}…
+                                        </span>
+                                        <span className="task-cat">{(task.category || 'unknown').replace('_',' ')}</span>
+                                        <StatusBadge status={task.status} />
+                                        {sla && (
+                                            <span className={`sla-tag ${sla.cls}`}>
+                                                <Clock size={11} style={{ verticalAlign: 'middle' }} />
+                                                {' '}{sla.text}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <span className={`sev-badge sev-${task.severity}`}>{task.severity}</span>
+                                </div>
+
+                                {task.description && (
+                                    <p className="task-desc">{task.description.slice(0, 160)}{task.description.length > 160 ? '…' : ''}</p>
+                                )}
+
+                                {task.address && (
+                                    <p className="task-addr">{task.address}</p>
+                                )}
+
+                                <div className="task-priority-row">
+                                    <span className="prio-label">Priority</span>
+                                    <div className="prio-bar-bg">
+                                        <div className="prio-bar-fill" style={{
+                                            width: `${task.priorityScore || 0}%`,
+                                            background: task.priorityScore > 70
+                                                ? 'var(--color-text-danger)'
+                                                : task.priorityScore > 40
+                                                    ? 'var(--color-text-warning)'
+                                                    : 'var(--color-text-info)',
+                                        }} />
+                                    </div>
+                                    <span className="prio-val">{task.priorityScore || 0}</span>
+                                </div>
+
+                                {/* Action buttons */}
+                                <div className="task-actions">
+                                    {isNew && (
+                                        <>
+                                            <button className="btn-accept" onClick={() => handleRespond(task, 'accepted')}>
+                                                <CheckCircle size={14} /> Accept
+                                            </button>
+                                            <button className="btn-reject" onClick={() => handleRespond(task, 'rejected')}>
+                                                <XCircle size={14} /> Reject
+                                            </button>
+                                        </>
+                                    )}
+                                    {inProg && (
+                                        <>
+                                            <button className="btn-resolve" onClick={() => handleSimpleResolve(task)}>
+                                                <CheckCircle size={14} /> Mark resolved
+                                            </button>
+                                            <button className="btn-proof" onClick={() => { setResolveModal(task); setProofFile(null); setProofNote(''); }}>
+                                                <Camera size={14} /> Resolve with photo
+                                            </button>
+                                        </>
+                                    )}
+                                    <button className="btn-detail" onClick={() => navigate(`/complaint/${task.incident_id}`)}>
+                                        View details
+                                    </button>
+                                </div>
+                            </div>
+                        );
+                    })}
+
+                    {/* Recently resolved */}
+                    {resolvedTasks.length > 0 && (
+                        <div className="resolved-section">
+                            <h4 className="section-title">Recently resolved ({resolvedTasks.length})</h4>
+                            {resolvedTasks.slice(0, 5).map(task => (
+                                <div key={task.incident_id} className="resolved-row" onClick={() => navigate(`/complaint/${task.incident_id}`)}>
+                                    <span className="task-id">{task.incident_id?.slice(0, 12)}…</span>
+                                    <span className="task-cat">{(task.category || '').replace('_',' ')}</span>
+                                    {task.resolution_proof_key && (
+                                        <span className="proof-tag"><Camera size={11} /> proof</span>
+                                    )}
+                                    <StatusBadge status={task.status} />
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
+            )}
 
-                {/* Filter Tabs */}
-                <div className="worker-filter-tabs">
-                    {[
-                        { key: 'all', label: 'All' },
-                        { key: 'submitted', label: 'New' },
-                        { key: 'assigned', label: 'Assigned' },
-                        { key: 'in_progress', label: 'In Progress' },
-                        { key: 'resolved', label: 'Resolved' },
-                    ].map(f => (
-                        <button
-                            key={f.key}
-                            className={`filter-tab ${filter === f.key ? 'active' : ''}`}
-                            onClick={() => setFilter(f.key)}
-                        >
-                            {f.label}
-                            <span className="filter-count">{counts[f.key]}</span>
-                        </button>
-                    ))}
-                </div>
-
-                {!selected ? (
-                    <div className="worker-list">
-                        {filteredAssignments.length === 0 ? (
-                            <div className="card" style={{ textAlign: 'center', padding: 'var(--space-xl)', color: 'var(--text-muted)' }}>
-                                <Filter size={32} style={{ marginBottom: '12px', opacity: 0.4 }} />
-                                <p>No assignments match this filter.</p>
+            {/* ── STATS VIEW ───────────────────────────────────────────────── */}
+            {!loading && view === 'stats' && stats && (
+                <div className="stats-view">
+                    <div className="stats-grid">
+                        {[
+                            { label: 'Total assigned',  val: stats.total,    color: 'var(--color-text-primary)' },
+                            { label: 'Resolved',        val: stats.resolved, color: 'var(--color-text-success)' },
+                            { label: 'In progress',     val: stats.active,   color: 'var(--color-text-warning)' },
+                            { label: 'Pending accept',  val: stats.pending,  color: 'var(--color-text-info)' },
+                        ].map(s => (
+                            <div key={s.label} className="stat-card">
+                                <div className="stat-val" style={{ color: s.color }}>{s.val}</div>
+                                <div className="stat-label">{s.label}</div>
                             </div>
-                        ) : (
-                            filteredAssignments.map((a) => (
-                                <div key={a.incident_id} className="worker-card card card-glow" onClick={() => setSelected(a)}>
-                                    <div className="wc-top">
-                                        <div className="wc-top-left">
-                                            <code className="wc-id">{a.incident_id?.split('-').pop()}</code>
-                                            <StatusBadge status={a.status} />
-                                            <SLABadge timestamp={a.timestamp || a.createdAt} />
-                                        </div>
-                                        <SeverityBadge severity={a.severity} />
-                                    </div>
-                                    <CategoryTag category={a.category} />
-                                    <p className="wc-desc">{a.aiDescription || a.description}</p>
-                                    <div className="wc-bottom">
-                                        <span className="wc-loc"><MapPin size={13} /> {(a.address || '').split(',')[0]}</span>
-                                        <PriorityBar score={a.priorityScore} />
-                                    </div>
-                                    <div className="wc-actions">
-                                        <button className="btn btn-sm btn-secondary" onClick={(e) => { e.stopPropagation(); openGoogleMaps(a); }}>
-                                            <Navigation size={14} /> Navigate
-                                        </button>
-                                        <button className="btn btn-sm btn-primary" onClick={(e) => { e.stopPropagation(); setSelected(a); }}>
-                                            Update Status
-                                        </button>
-                                    </div>
-                                </div>
-                            ))
-                        )}
+                        ))}
                     </div>
-                ) : (
-                    <div className="worker-detail animate-fade-in">
-                        <button className="btn btn-secondary btn-sm" onClick={() => setSelected(null)} style={{ marginBottom: 'var(--space-lg)' }}>
-                            <ArrowLeft size={14} /> Back to List
-                        </button>
-                        <div className="card">
-                            <div className="wc-top">
-                                <div className="wc-top-left">
-                                    <code className="wc-id">{selected.incident_id}</code>
-                                    <StatusBadge status={selected.status} />
-                                    <SLABadge timestamp={selected.timestamp || selected.createdAt} />
-                                </div>
-                                <SeverityBadge severity={selected.severity} />
-                            </div>
-                            <CategoryTag category={selected.category} />
-                            <p className="detail-desc" style={{ margin: 'var(--space-md) 0' }}>{selected.aiDescription || selected.description}</p>
 
-                            {/* Image Preview */}
-                            {selected.imageUrl && (
-                                <div className="worker-image-preview">
-                                    <img src={selected.imageUrl} alt="Complaint" />
-                                </div>
-                            )}
-
-                            <div className="detail-location">
-                                <MapPin size={16} />
-                                <span>{selected.address}</span>
-                                <button className="btn btn-sm btn-secondary" onClick={() => openGoogleMaps(selected)} style={{ marginLeft: 'auto' }}>
-                                    <Navigation size={14} /> Get Directions
-                                </button>
-                            </div>
-
-                            {/* Priority Info */}
-                            <div className="worker-priority-info">
-                                <div className="priority-item">
-                                    <span className="priority-label">Priority Score</span>
-                                    <PriorityBar score={selected.priorityScore || 0} />
-                                </div>
-                                <div className="priority-item">
-                                    <span className="priority-label">Department</span>
-                                    <span className="priority-value">{selected.department || 'Unassigned'}</span>
-                                </div>
-                                <div className="priority-item">
-                                    <span className="priority-label">Reported By</span>
-                                    <span className="priority-value">{selected.user_name || selected.user_phone || 'Unknown'}</span>
-                                </div>
-                            </div>
-
-                            <div className="wc-update card" style={{ background: 'var(--bg-primary)' }}>
-                                <h3 style={{ marginBottom: 'var(--space-md)' }}>Update Status</h3>
-                                <div className="status-options">
-                                    {[
-                                        { value: 'in_progress', icon: <Wrench size={14} />, label: 'In Progress' },
-                                        { value: 'resolved', icon: <CheckCircle size={14} />, label: 'Resolved' },
-                                    ].map((s) => (
-                                        <label key={s.value} className={`status-radio ${newStatus === s.value ? 'active' : ''}`}>
-                                            <input type="radio" name="status" value={s.value} checked={newStatus === s.value} onChange={() => setNewStatus(s.value)} />
-                                            {s.icon} <span>{s.label}</span>
-                                        </label>
-                                    ))}
-                                </div>
-                                <div className="input-group">
-                                    <label>Resolution Notes</label>
-                                    <textarea className="input" placeholder="Describe the work done or issue found on site..." value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} />
-                                </div>
-                                <button className="btn btn-success" style={{ marginTop: 'var(--space-md)', width: '100%' }} onClick={handleUpdate} disabled={!newStatus || updating}>
-                                    {updating ? <><Loader2 size={16} className="spin-icon" /> Updating...</> : <><CheckCircle size={16} /> Update Complaint</>}
-                                </button>
-                            </div>
+                    <div className="stats-details">
+                        <div className="detail-row">
+                            <span className="detail-label">Avg resolution time</span>
+                            <span className="detail-val">
+                                {stats.avgResolutionHours ? `${stats.avgResolutionHours}h` : 'N/A'}
+                            </span>
+                        </div>
+                        <div className="detail-row">
+                            <span className="detail-label">SLA compliance</span>
+                            <span className={`detail-val ${stats.slaComplianceRate >= 80 ? 'good' : 'low'}`}>
+                                {stats.slaComplianceRate}%
+                            </span>
+                        </div>
+                        <div className="detail-row">
+                            <span className="detail-label">Rejected tasks</span>
+                            <span className="detail-val">{stats.rejected}</span>
                         </div>
                     </div>
-                )}
-            </div>
+
+                    {/* SLA compliance bar */}
+                    <div className="sla-bar-section">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                            <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>SLA compliance rate</span>
+                            <span style={{ fontSize: 13, fontWeight: 500 }}>{stats.slaComplianceRate}%</span>
+                        </div>
+                        <div className="sla-bar-bg">
+                            <div
+                                className="sla-bar-fill"
+                                style={{
+                                    width: `${stats.slaComplianceRate}%`,
+                                    background: stats.slaComplianceRate >= 80
+                                        ? 'var(--color-text-success)'
+                                        : stats.slaComplianceRate >= 50
+                                            ? 'var(--color-text-warning)'
+                                            : 'var(--color-text-danger)',
+                                }}
+                            />
+                        </div>
+                    </div>
+
+                    {stats.recentResolved.length > 0 && (
+                        <div className="recent-resolved">
+                            <h4 className="section-title">Recent resolutions</h4>
+                            {stats.recentResolved.map(c => (
+                                <div key={c.incident_id} className="resolved-row" onClick={() => navigate(`/complaint/${c.incident_id}`)}>
+                                    <span className="task-id">{c.incident_id?.slice(0, 12)}…</span>
+                                    <span className="task-cat">{(c.category || '').replace('_',' ')}</span>
+                                    <StatusBadge status={c.status} />
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* ── Resolve with proof modal ──────────────────────────────────── */}
+            {resolveModal && (
+                <div className="modal-backdrop" onClick={() => setResolveModal(null)}>
+                    <div className="modal-box" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3>Resolve with photo proof</h3>
+                            <button className="modal-close" onClick={() => setResolveModal(null)}><X size={16}/></button>
+                        </div>
+                        <p className="modal-sub">
+                            {resolveModal.incident_id?.slice(0,12)}… &middot; {resolveModal.category?.replace('_',' ')}
+                        </p>
+
+                        {/* Photo upload */}
+                        <div
+                            className={`photo-drop ${proofFile ? 'has-file' : ''}`}
+                            onClick={() => fileRef.current?.click()}
+                        >
+                            {proofFile
+                                ? <><Camera size={16} /> {proofFile.name}</>
+                                : <><Camera size={16} /> Tap to attach resolution photo (optional)</>
+                            }
+                        </div>
+                        <input
+                            ref={fileRef}
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            style={{ display: 'none' }}
+                            onChange={e => setProofFile(e.target.files[0] || null)}
+                        />
+
+                        <label className="form-label" style={{ marginTop: 12 }}>Resolution note</label>
+                        <textarea
+                            className="modal-textarea"
+                            rows={3}
+                            placeholder="Describe what was done, materials used, etc."
+                            value={proofNote}
+                            onChange={e => setProofNote(e.target.value)}
+                        />
+
+                        <div className="modal-actions">
+                            <button className="btn-ghost" onClick={() => setResolveModal(null)}>Cancel</button>
+                            <button
+                                className="btn-accept"
+                                disabled={resolveLoading}
+                                onClick={handleResolveWithProof}
+                            >
+                                {resolveLoading ? 'Uploading…' : 'Submit & resolve'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {toast && <div className="toast">{toast}</div>}
         </div>
     );
-};
-
-export default Worker;
+}
